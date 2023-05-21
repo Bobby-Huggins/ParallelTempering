@@ -47,18 +47,42 @@ Construct a ParallelSampler with default settings.
 - `x0::Vector{Float64}` (optiona): the initial starting parameters. Defaults to
    zeros.
 """
-function ParallelSampler(log_likelihood, log_prior, d, betas, base_proposal, n_samples, swap_rate=0.5; x0=zeros(d))
+function ParallelSampler(
+        log_likelihood,
+        log_prior,
+        d,
+        betas,
+        base_proposal,
+        n_samples,
+        swap_rate=0.5;
+        x0=zeros(d),
+        adapt=true,
+        n_adapt=n_samples ÷ 4,
+        scales=nothing,
+    )
     n_temps = length(betas)
-    n_adapt = n_samples ÷ 4
+    if scales === nothing
+        scales = 0.5 * ones(n_temps)
+    end
     loglikes = -Inf * ones(n_temps, n_samples)
-    ll0 = log_likelihood(x0)
-    loglikes[:, 1] .= ll0
     logpriors = -Inf * ones(n_temps, n_samples)
-    lp0 = log_prior(x0)
-    logpriors[:, 1] .= lp0
     chains = zeros(d, n_temps, n_samples)
-    for t in 1:n_temps
-        chains[:, t, 1] = x0
+    if isa(x0, Vector{T} where {T <: Real})
+        for t in 1:n_temps
+            chains[:, t, 1] = x0
+            ll0 = log_likelihood(x0)
+            loglikes[:, 1] .= ll0
+            lp0 = log_prior(x0)
+            logpriors[:, 1] .= lp0
+        end
+    elseif isa(x0, Array{T, 2} where {T <: Real})
+        chains[:, :, 1] = x0
+        for k in 1:size(x0, 2)
+            loglikes[k, 1] = log_likelihood(x0[:, k])
+            logpriors[k, 1] = log_prior(x0[:, k])
+        end
+    else
+        error("x0 should be a real vector of length `d` or a `d`-by-`n_temps` real array.")
     end
 
     return ParallelSampler(
@@ -72,10 +96,10 @@ function ParallelSampler(log_likelihood, log_prior, d, betas, base_proposal, n_s
         chains = chains,
         loglikes = loglikes,
         logpriors = logpriors,
-        scales = 0.5 * ones(n_temps),
+        scales = scales,
         swap_type = :random,
         swap_rate = swap_rate,
-        adapt = true,
+        adapt = adapt,
         n_adapt = n_adapt,
         n_mh_proposals = 0,
         accs = zeros(n_temps),
@@ -112,7 +136,7 @@ function step!(sampler::ParallelSampler)
         propose_swap!(sampler)
     else
         propose_mh!(sampler)
-        if (sampler.i < sampler.n_adapt) && (sampler.n_mh_proposals > 0)
+        if sampler.adapt && (sampler.i < sampler.n_adapt) && (sampler.n_mh_proposals > 0)
             adapt!(sampler)
         end
     end
